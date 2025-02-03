@@ -1,4 +1,5 @@
-import requests
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
 import json
 import os
 import fitz  # PyMuPDF for PDF
@@ -15,6 +16,7 @@ import nltk
 from sentence_transformers import SentenceTransformer
 from pdf2image import convert_from_path  # For converting PDF pages to images
 import comtypes.client  # For converting PPTX/DOCX to PDF (requires Microsoft Office)
+import asyncio
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -29,9 +31,29 @@ except LookupError:
 # Set Tesseract path (update this to your Tesseract installation path)
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-# API endpoint
-url = "http://localhost:11434/api/generate"
+app = FastAPI()
 
+# Serve static files (for React frontend)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# WebSocket connection manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def send_message(self, message: str, websocket: WebSocket):
+        await websocket.send_text(message)
+
+manager = ConnectionManager()
+
+# File processing functions (same as before)
 def categorize_file(file_path):
     if not file_path:
         return "unknown"
@@ -166,57 +188,24 @@ def retrieve_relevant_content(index, model, query, documents, top_k=3):
     relevant_content = "\n".join([documents[i] for i in indices[0]])
     return relevant_content
 
-def send_request(prompt, file_path=None):
-    data = {
-        "model": "deepseek-r1:1.5b",
-        "prompt": prompt,
-        "stream": False
-    }
-    
-    if file_path:
-        file_content = process_file(file_path)
-        category = categorize_file(file_path)
-
-        if file_content and category in ["pdf", "csv", "text", "docx", "pptx", "xlsx"]:
-            documents = chunk_document(file_content)
-            index, model = create_faiss_index(documents)
-            relevant_content = retrieve_relevant_content(index, model, prompt, documents)
-
-            data["prompt"] += f"\n\nAnswer the following prompt based on the provided attachment.\nAttachment Type: {category}. Relevant Content:\n{relevant_content}"
-        elif category == "image":
-            if file_content:
-                data["prompt"] += f"\n\nAttachment Type: {category}. Content:\n{file_content[:500]}"
-            else:
-                data["prompt"] += f"\n\nAttachment Type: {category}. The image could not be processed. Please provide a description."
-        else:
-            logging.warning(f"Cannot process file: {file_path}")
-            return "The file type is unsupported or the file could not be processed."
-
+# WebSocket endpoint
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
     try:
-        response = requests.post(url, data=json.dumps(data), headers={"Content-Type": "application/json"})
-        response.raise_for_status()
-        return response.json().get('response', 'No response content available.')
-    except requests.exceptions.RequestException as e:
-        logging.error(f"API request failed: {e}")
-        return "Failed to get a response from the API"
+        while True:
+            data = await websocket.receive_text()
+            message = json.loads(data)
+            prompt = message.get("prompt")
+            file_path = message.get("file_path")
 
-def interactive_chat():
-    while True:
-        prompt = input("Enter your prompt (or type 'exit' to quit): ")
-        if prompt.lower() == "exit":
-            break
-        file_path = input("Enter the file path (or leave blank if none): ").strip('"')
-        file_path = file_path if file_path.strip() else None
+            # Process the message
+            response = send_request(prompt, file_path)
+            await manager.send_message(json.dumps({"response": response}), websocket)
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
-        result = send_request(prompt, file_path)
-        print(result)
-
-        # Ask for feedback
-        feedback = input("Was this response helpful? (yes/no): ")
-        if feedback.lower() == "no":
-            clarification = input("What additional information do you need? ")
-            result = send_request(clarification, file_path)
-            print(result)
-
+# Run the FastAPI server
 if __name__ == "__main__":
-    interactive_chat()
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
