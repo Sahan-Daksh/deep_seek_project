@@ -7,6 +7,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card } from "@/components/ui/card";
 import { Mic, MicOff, Pause, Play, Send, Upload, X, AlertCircle, MessageSquare, Plus, Square } from "lucide-react";
 import { formatDistance } from "date-fns";
+////
+//import WebSocketClient from "./app/WebSocketClient"; // <-- Import here
+
 
 interface Message {
   id: string;
