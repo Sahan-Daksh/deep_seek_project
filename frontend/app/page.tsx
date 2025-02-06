@@ -1,14 +1,13 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card } from "@/components/ui/card";
 import { Mic, MicOff, Pause, Play, Send, Upload, X, AlertCircle, MessageSquare, Plus, Square } from "lucide-react";
 import { formatDistance } from "date-fns";
-////
-//import WebSocketClient from "./app/WebSocketClient"; // <-- Import here
+import WebSocketClient from "./WebSocketClient";
 
 
 interface Message {
@@ -42,6 +41,8 @@ export default function Home() {
   const [recentChats, setRecentChats] = useState<Chat[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [transcription, setTranscription] = useState("");
+  const [wsConnected, setWsConnected] = useState(false);
+  const [wsError, setWsError] = useState<string | null>(null);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -64,6 +65,25 @@ export default function Home() {
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+
+  const handleWebSocketMessage = useCallback((message: string) => {
+    const botMessage: Message = {
+      id: Math.random().toString(36).substring(7),
+      content: message,
+      role: "assistant",
+      timestamp: new Date()
+    };
+    setMessages(prev => [...prev, botMessage]);
+  }, []);
+  
+  const handleWebSocketError = useCallback((error: string) => {
+    setWsError(error);
+  }, []);
+  
+  const handleWebSocketConnect = useCallback(() => {
+    setWsConnected(true);
+    setWsError(null);
+  }, []);
 
   const startSpeechRecognition = () => {
     if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
@@ -204,7 +224,7 @@ export default function Home() {
     setMessages(chat.messages);
   };
 
-  const addMessage = (content: string, messageAttachments?: Message["attachments"]) => {
+  const addMessage = async (content: string, messageAttachments?: Message["attachments"]) => {
     const newMessage: Message = {
       id: Math.random().toString(36).substring(7),
       content,
@@ -213,17 +233,41 @@ export default function Home() {
       attachments: messageAttachments
     };
     setMessages(prev => [...prev, newMessage]);
+  
+    if (messageAttachments?.length) {
+      for (const attachment of messageAttachments) {
+        const formData = new FormData();
+        const file = attachments.find(f => URL.createObjectURL(f) === attachment.url);
+        if (file) {
+          formData.append('file', file);
+          formData.append('question', content); 
 
-    // Simulate bot response
-    setTimeout(() => {
-      const botMessage: Message = {
-        id: Math.random().toString(36).substring(7),
-        content: "This is a simulated response. Integrate your chatbot API here.",
-        role: "assistant",
-        timestamp: new Date()
+          try {
+            const response = await fetch('http://localhost:8000/upload', {
+              method: 'POST',
+              body: formData,
+            });
+            const data = await response.json();
+            handleWebSocketMessage(data.response);
+          } catch (error) {
+            console.error('Error uploading file:', error);
+            setWsError('Failed to process file');
+          }
+        }
+      }
+    } else {
+      // Send message through WebSocket
+      const ws = new WebSocket('ws://localhost:8000/ws');
+      ws.onopen = () => {
+        ws.send(content);
       };
-      setMessages(prev => [...prev, botMessage]);
-    }, 1000);
+      ws.onmessage = (event) => {
+        handleWebSocketMessage(event.data);
+      };
+      ws.onerror = () => {
+        setWsError('Failed to send message');
+      };
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -242,6 +286,11 @@ export default function Home() {
 
   return (
     <div className="flex h-screen">
+      <WebSocketClient 
+        onMessage={handleWebSocketMessage}
+        onError={handleWebSocketError}
+        onConnect={handleWebSocketConnect}
+      />
       {/* Sidebar */}
       <div className="w-64 bg-card border-r border-border p-4">
         <div className="flex items-center justify-between mb-4">

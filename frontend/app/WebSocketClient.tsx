@@ -1,31 +1,58 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useCallback } from "react";
 
-export default function WebSocketClient() {
+interface WebSocketClientProps {
+  onMessage: (message: string) => void;
+  onError: (error: string) => void;
+  onConnect: () => void;
+}
+
+export default function WebSocketClient({ onMessage, onError, onConnect }: WebSocketClientProps) {
   const socketRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
+
+  const connect = useCallback(() => {
+    try {
+      socketRef.current = new WebSocket("ws://localhost:8000/ws");
+
+      socketRef.current.onopen = () => {
+        console.log("WebSocket connected");
+        onConnect();
+      };
+
+      socketRef.current.onmessage = (event) => {
+        console.log("Message received:", event.data);
+        onMessage(event.data);
+      };
+
+      socketRef.current.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        onError("Connection error occurred");
+      };
+
+      socketRef.current.onclose = () => {
+        console.log("WebSocket closed. Attempting to reconnect...");
+        reconnectTimeoutRef.current = setTimeout(connect, 3000);
+      };
+    } catch (error) {
+      console.error("WebSocket connection error:", error);
+      onError("Failed to establish connection");
+    }
+  }, [onMessage, onError, onConnect]);
 
   useEffect(() => {
-    // Replace 'localhost' & '8000' with your server address if different
-    socketRef.current = new WebSocket("ws://localhost:8000/ws");
-
-    socketRef.current.onopen = () => {
-      console.log("WebSocket connected");
-      socketRef.current?.send("Hello from client!");
-    };
-
-    socketRef.current.onmessage = (event) => {
-      console.log("Message from server:", event.data);
-    };
-
-    socketRef.current.onclose = () => {
-      console.log("WebSocket closed");
-    };
+    connect();
 
     return () => {
-      socketRef.current?.close();
+      if (socketRef.current) {
+        socketRef.current.close();
+      }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
     };
-  }, []);
+  }, [connect]);
 
-  return <div>WebSocket Demo</div>;
+  return null;
 }
