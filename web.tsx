@@ -22,8 +22,8 @@ export default function WebSocketClient({ onMessage, onError, onConnect }: WebSo
       };
 
       socketRef.current.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        onMessage(data.response);
+        console.log("Message received:", event.data);
+        onMessage(event.data);
       };
 
       socketRef.current.onerror = (error) => {
@@ -39,10 +39,11 @@ export default function WebSocketClient({ onMessage, onError, onConnect }: WebSo
       console.error("WebSocket connection error:", error);
       onError("Failed to establish connection");
     }
-  }, [onConnect, onMessage, onError]);
+  }, [onMessage, onError, onConnect]);
 
   useEffect(() => {
     connect();
+
     return () => {
       if (socketRef.current) {
         socketRef.current.close();
