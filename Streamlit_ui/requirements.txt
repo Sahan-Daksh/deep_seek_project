@@ -1,0 +1,16 @@
+streamlit
+requests
+json
+os
+fitz
+pandas
+pytesseract
+PIL
+openpyxl
+faiss
+numpy
+logging
+nltk
+sentence_transformers
+pdf2image
+comtypes.client
